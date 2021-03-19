@@ -83,6 +83,20 @@
     [(str (compile-atom (first form)) "(" (str/join ", " args) ")")
      deps]))
 
+(defn- compile-field-access
+  "Constructs a GLSL struct field access for a form"
+  [form env]
+  (let [[object deps] (compile (second form) env)]
+    [(str object "." (sym->ident (first form)))
+     deps]))
+
+(defn- ensure-ns
+  "Takes a symbol, and if it lacks a namespace, adds [[*ns*]]."
+  [sym]
+  (if (namespace sym)
+    sym
+    (symbol (name (ns-name *ns*)) (name sym))))
+
 (defn compile
   ""
   [form env]
@@ -98,18 +112,24 @@
       (when-let [var (resolve env (first form))]
         (if (.isMacro var)
           (recur (apply var form env (rest form)) env)
-          (let [[compiled deps] (compile-fn-call form env)]
+          (let [new-sym (ensure-ns (first form))
+                [compiled deps] (compile-fn-call (cons new-sym (rest form)) env)]
             [compiled (conj deps var)])))
 
       (symbol? (first form))
       (compile-fn-call (cons (symbol (name (first form)))
                              (rest form))
-                       env))
-    [(compile-atom form)
-     (or (when (symbol? form)
-           (when-let [var (resolve env form)]
-             #{var}))
-         #{})]))
+                       env)
+
+      (keyword? (first form))
+      (compile-field-access form env))
+    (cond
+      (symbol? form)
+      (if-let [var (resolve env form)]
+        [(compile-atom (ensure-ns form)) #{var}]
+        [(compile-atom form) #{}])
+
+      :otherwise (compile-atom form))))
 
 (defn- cljsl-if
   ""
@@ -160,8 +180,15 @@
 (defn- cljsl-set!
   ""
   [form env var initexpr]
-  (let [[initexpr deps] (compile initexpr env)]
-    [(str (compile-atom var) "=" initexpr) deps]))
+  (let [[initexpr deps] (compile initexpr env)
+        dep-var (resolve env var)
+        deps (cond-> deps
+               dep-var (conj dep-var))]
+    [(str (compile-atom (if dep-var
+                          (ensure-ns var)
+                          var))
+          "=" initexpr)
+     deps]))
 
 (defn- cljsl-do
   ""
@@ -349,7 +376,8 @@
                       (repeat {}))
         bindings-src (map first bindings)
         bindings-deps (reduce set/union (map second bindings))
-        body (compile (cons 'do body) {})
+        env (set args)
+        body (compile (cons 'do body) env)
         body-src (first body)
         body-deps (second body)]
     [(str (if ret
@@ -366,3 +394,139 @@
           body-src
           "}\n")
      (set/union bindings-deps body-deps)]))
+
+(defn- layout-str
+  ""
+  [layout]
+  (str "layout(" (str/join "," (map #(str (key %) (when-let [v (val %)] (str "=" v))) layout)) ")"))
+
+(defn compile-global
+  ""
+  [var-name type storage & {:keys [layout invariant? interpolation array-size init] :as opts}]
+  (let [[initexpr init-deps] (when init (compile init {}))
+        [arr-expr arr-deps] (when array-size (compile array-size {}))]
+    [(str (when invariant? "invariant")
+          " " interpolation
+          " " (when layout (layout-str layout))
+          " " storage " " type " " (sym->ident var-name) (when arr-expr (str "[" arr-expr "]"))
+          " " (when init (str "=" initexpr))";\n")
+     (or (set/union init-deps arr-deps) #{})]))
+
+(defn compile-block
+  ""
+  [block-name storage bindings & {:keys [layout instance-name array-size]}]
+  (let [[arr-expr deps] (when array-size (compile array-size {}))
+        bindings (map (fn [[name binding]]
+                        (let [[type & {:keys [storage] :as mods}]
+                              (if-not (seq? binding) [binding] binding)]
+                          (apply compile-global name type storage (mapcat identity mods))))
+                      bindings)
+        bindings-src (map first bindings)
+        bindings-deps (map second bindings)]
+    [(str (when layout (layout-str layout))
+          " " storage
+          " " (sym->ident block-name) "\n"
+          "{\n"
+          (str/join bindings-src)
+          "} " (sym->ident instance-name) (when arr-expr (str "[" arr-expr "]")) ";\n")
+     (or (reduce set/union deps bindings-deps) #{})]))
+
+;; ==================================================================
+;; Macros
+
+(defmacro defconst
+  ""
+  {:arglists '([symbol type docstring? init & {:keys [array-size]}])}
+  [sym type & args]
+  (let [[docstring init & {:keys [array-size]}]
+        (cond->> args
+          (not (string? (first args))) (cons nil))
+        [src deps] (compile-global (ensure-ns sym)
+                                   type
+                                   "const"
+                                   :init init
+                                   :array-size array-size)]
+    `(def ~sym ~@(when docstring [docstring])
+       {::type :const
+        ::source ~src
+        ::deps ~deps})))
+
+(defmacro defparam
+  ""
+  {:arglists '([symbol type docstring? & {:keys [array-size interpolation layout invariant?]}])}
+  [sym type & args]
+  (let [[docstring & {:as opts}]
+        (cond->> args
+          (not (string? (first args))) (cons nil))]
+    `(def ~sym ~@(when docstring [docstring])
+       {::type :param
+        ::name '~(ensure-ns sym)
+        ::param-type ~type
+        ::opts ~opts})))
+
+(defmacro defuniform
+  ""
+  {:arglists '([symbol type docstring? & {:keys [array-size layout]}])}
+  [sym type & args]
+  (let [[docstring & {:keys [array-size layout]}]
+        (cond->> args
+          (not (string? (first args))) (cons nil))
+        [src deps] (compile-global (ensure-ns sym)
+                                   type
+                                   "uniform"
+                                   :layout layout
+                                   :array-size array-size)]
+    `(def ~sym ~@(when docstring [docstring])
+       {::type :uniform
+        ::source ~src
+        ::deps ~deps})))
+
+(defmacro defshaderfn
+  ""
+  {:arglists '([symbol docstring? [params*] & body])}
+  [sym & args]
+  (let [[docstring params & body]
+        (cond->> args
+          (not (string? (first args))) (cons nil))
+        [src deps] (compile-function (ensure-ns sym)
+                                     params
+                                     (:tag (meta params))
+                                     body)]
+    `(def ~sym ~@(when docstring [docstring])
+       {::type :function
+        ::source ~src
+        ::deps ~deps})))
+
+(defn- realize-param
+  ""
+  [param storage]
+  (apply compile-global (::name param) (::param-type param) storage (mapcat identity (::opts param))))
+
+(defn- collect-deps
+  ""
+  [start-deps]
+  (letfn [(deps-seq [deps]
+            (when deps
+              (concat (mapcat (comp deps-seq ::deps deref) deps) deps)))]
+    (distinct (deps-seq start-deps))))
+
+(defmacro defshader
+  ""
+  {:arglists '([symbol docstring? {in-out-param :in-or-out} & body])}
+  [sym & args]
+  (let [[docstring bindings & body]
+        (cond->> args
+          (not (string? (first args))) (cons nil))
+        bindings (reduce-kv (fn [m k v] (assoc m (ensure-ns k) v))
+                            {} bindings)
+        [src deps] (compile-function 'main nil nil body)
+        deps (group-by ::type (map deref (collect-deps deps)))]
+    `(def ~sym ~@(when docstring [docstring])
+       ~(str/join "\n\n"
+                  [(str/join (map ::source (:const deps)))
+                   (str/join (map ::source (:uniform deps)))
+                   (str/join (map (fn [param]
+                                    (first (realize-param param (name (bindings (::name param))))))
+                                  (:param deps)))
+                   (str/join "\n" (map ::source (:function deps)))
+                   src]))))
