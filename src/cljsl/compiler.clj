@@ -22,21 +22,17 @@
                          (map (fn [c]
                                 (if (re-matches #"[0-9a-zA-Z_]" (str c))
                                   (str c)
-                                  (str (apply str "__" (replace {\space \_ \( \_ \) \_}
-                                                                (Character/getName (int c))))
-                                       "__")))))
+                                  (str (apply str "_" (replace {\space \_ \( \_ \) \_}
+                                                               (Character/getName (int c))))
+                                       "_")))))
                    (seq s))))
 
 (defn sym->ident
   ""
   [s]
   (if (namespace s)
-    (str "NS__" (str->ident (namespace s)) "__SYM__" (str->ident (name s)))
-    (str (let [f (first (name s))]
-           (if (digit? f)
-             (str \_ f)
-             f))
-         (str->ident (subs (name s) 1)))))
+    (str "NS_" (str->ident (namespace s)) "_SYM_" (str->ident (name s)))
+    (str->ident (name s))))
 
 (defprotocol Atom
   "Objects that can be converted directly into text in GLSL code."
