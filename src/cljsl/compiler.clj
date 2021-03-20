@@ -623,31 +623,34 @@
         bindings (reduce-kv (fn [m k v] (assoc m (ensure-ns k) v))
                             {} bindings)
         [src deps] (compile-function 'main nil nil body)
-        deps (group-by ::type (map deref (collect-deps deps)))]
+        grouped-deps (group-by ::type (map deref (collect-deps deps)))
+        src (str
+             "#version " (or (:version (meta sym)) 400)
+             " " (str/join " " (or (:extensions (meta sym))
+                                   '("core")))
+             "\n"
+             (str/join "\n\n"
+                       [(str/join (map ::source (:struct grouped-deps)))
+                        (str/join (map ::source (:const grouped-deps)))
+                        (str/join (map ::source (:uniform grouped-deps)))
+                        (str/join (map (fn [param]
+                                         (when-not (bindings (::name param))
+                                           (throw
+                                            (ex-info "parameters require a storage specifier"
+                                                     {:param (::name param)})))
+                                         (first (realize-param param (name (bindings (::name param))))))
+                                       (:param grouped-deps)))
+                        (str/join (map (fn [interface]
+                                         (when-not (bindings (::block-name interface))
+                                           (throw
+                                            (ex-info "interface blocks require a storage specifier"
+                                                     {:interface (::block-name interface)})))
+                                         (first (realize-interface interface
+                                                                   (name (bindings (::block-name interface))))))
+                                       (:interface grouped-deps)))
+                        (str/join "\n" (map ::source (:function grouped-deps)))
+                        src]))]
     `(def ~sym ~@(when docstring [docstring])
-       ~(str
-         "#version " (or (:version (meta sym)) 400)
-         " " (str/join " " (or (:extensions (meta sym))
-                               '("core")))
-         "\n"
-         (str/join "\n\n"
-                   [(str/join (map ::source (:struct deps)))
-                    (str/join (map ::source (:const deps)))
-                    (str/join (map ::source (:uniform deps)))
-                    (str/join (map (fn [param]
-                                     (when-not (bindings (::name param))
-                                       (throw
-                                        (ex-info "parameters require a storage specifier"
-                                                 {:param (::name param)})))
-                                     (first (realize-param param (name (bindings (::name param))))))
-                                   (:param deps)))
-                    (str/join (map (fn [interface]
-                                     (when-not (bindings (::block-name interface))
-                                       (throw
-                                        (ex-info "interface blocks require a storage specifier"
-                                                 {:interface (::block-name interface)})))
-                                     (first (realize-interface interface
-                                                               (name (bindings (::block-name interface))))))
-                                   (:interface deps)))
-                    (str/join "\n" (map ::source (:function deps)))
-                    src])))))
+       {::type :shader
+        ::source ~src
+        ::deps ~deps})))
