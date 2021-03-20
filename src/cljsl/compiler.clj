@@ -123,13 +123,11 @@
 
       (keyword? (first form))
       (compile-field-access form env))
-    (cond
-      (symbol? form)
-      (if-let [var (resolve env form)]
-        [(compile-atom (ensure-ns form)) #{var}]
-        [(compile-atom form) #{}])
-
-      :otherwise (compile-atom form))))
+    (or
+      (when-let [var (when (symbol? form)
+                       (resolve env form))]
+        [(compile-atom (ensure-ns form)) #{var}])
+      [(compile-atom form) #{}])))
 
 (defn- cljsl-if
   ""
