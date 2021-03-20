@@ -8,7 +8,7 @@
   (:import
    (clojure.lang Symbol))
   (:refer-clojure
-   :exclude [compile]))
+   :exclude [compile definterface defstruct]))
 
 (def digit?
   "All the digit characters."
@@ -205,18 +205,25 @@
   ([type var init env]
    (var-declaration type nil var init env))
   ([type mods var init env]
-   (let [[initexpr deps] (when init
+   (when-not type
+     (throw (ex-info "variable declarations require a type"
+                     {:var var})))
+   (let [type-dep (if-let [type-var (when (symbol? type)
+                                      (resolve type))]
+                    #{type-var}
+                    #{})
+         [initexpr deps] (when init
                            (compile init env))]
      [(str mods
            " "
            (if (symbol? type)
-             (compile-atom type)
+             (compile-atom (ensure-ns type))
              (str->ident type))
            " "
            (compile-atom var)
            (when initexpr
              (str "=" initexpr)))
-      deps])))
+      (set/union type-dep deps)])))
 
 (defn- cljsl-let
   ""
@@ -368,6 +375,8 @@
 (defn compile-function
   ""
   [name args ret body]
+  (when-not name
+    (throw (ex-info "functions require a name" {})))
   (let [bindings (map var-declaration
                       (map (comp :tag meta) args)
                       (map (comp :mods meta) args)
@@ -376,14 +385,18 @@
                       (repeat {}))
         bindings-src (map first bindings)
         bindings-deps (reduce set/union (map second bindings))
-        env (set args)
+        env (zipmap args (repeat :function-parameter))
         body (compile (cons 'do body) env)
         body-src (first body)
-        body-deps (second body)]
+        body-deps (second body)
+        ret-dep (if-let [ret-var (when (symbol? ret)
+                                   (resolve ret))]
+                  #{ret-var}
+                  #{})]
     [(str (if ret
-            (if (string? ret)
-              (compile-atom (symbol ret))
-              (compile-atom ret))
+            (if (symbol? ret)
+              (compile-atom ret)
+              (str->ident ret))
             "void")
           " "
           (compile-atom name)
@@ -393,7 +406,7 @@
           "{\n"
           body-src
           "}\n")
-     (set/union bindings-deps body-deps)]))
+     (set/union bindings-deps body-deps ret-dep)]))
 
 (defn- layout-str
   ""
@@ -402,19 +415,35 @@
 
 (defn compile-global
   ""
-  [var-name type storage & {:keys [layout invariant? interpolation array-size init] :as opts}]
+  [var-name type storage & {:keys [layout invariant? interpolation array-size init memory-qualifier] :as opts}]
+  (when-not var-name
+    (throw (ex-info "globals require a name" {})))
+  (when-not type
+    (throw (ex-info "globals require a type"
+                    {:var var-name})))
   (let [[initexpr init-deps] (when init (compile init {}))
-        [arr-expr arr-deps] (when array-size (compile array-size {}))]
+        [arr-expr arr-deps] (when array-size (compile array-size {}))
+        type-deps (if-let [var (when (symbol? type)
+                                 (resolve type))]
+                    #{var}
+                    #{})]
     [(str (when invariant? "invariant")
           " " interpolation
           " " (when layout (layout-str layout))
-          " " storage " " type " " (sym->ident var-name) (when arr-expr (str "[" arr-expr "]"))
+          " " memory-qualifier
+          " " storage
+          " " (if (symbol? type) (sym->ident (ensure-ns type)) type)
+          " " (sym->ident var-name) (when arr-expr (str "[" arr-expr "]"))
           " " (when init (str "=" initexpr))";\n")
      (or (set/union init-deps arr-deps) #{})]))
 
 (defn compile-block
   ""
-  [block-name storage bindings & {:keys [layout instance-name array-size]}]
+  [block-name storage bindings & {:keys [layout instance-name array-size memory-qualifier]}]
+  (when (and memory-qualifier
+             (not= storage "buffer"))
+    (throw (ex-info "memory qualifiers can only be specified on buffer blocks"
+                    {:block block-name :qualifier memory-qualifier})))
   (let [[arr-expr deps] (when array-size (compile array-size {}))
         bindings (map (fn [[name binding]]
                         (let [[type & {:keys [storage] :as mods}]
@@ -424,11 +453,17 @@
         bindings-src (map first bindings)
         bindings-deps (map second bindings)]
     [(str (when layout (layout-str layout))
+          " " memory-qualifier
           " " storage
           " " (sym->ident block-name) "\n"
           "{\n"
           (str/join bindings-src)
-          "} " (sym->ident instance-name) (when arr-expr (str "[" arr-expr "]")) ";\n")
+          "} "
+          (when instance-name
+            (sym->ident instance-name))
+          (when arr-expr
+            (str "[" arr-expr "]"))
+          ";\n")
      (or (reduce set/union deps bindings-deps) #{})]))
 
 ;; ==================================================================
@@ -462,7 +497,10 @@
        {::type :param
         ::name '~(ensure-ns sym)
         ::param-type ~type
-        ::opts ~opts})))
+        ::opts ~opts
+        ::deps ~(if (symbol? type)
+                  #{(resolve type)}
+                  #{})})))
 
 (defmacro defuniform
   ""
@@ -478,6 +516,68 @@
                                    :array-size array-size)]
     `(def ~sym ~@(when docstring [docstring])
        {::type :uniform
+        ::source ~src
+        ::deps ~deps})))
+
+(defmacro definterface
+  ""
+  {:arglists '([symbol docstring? structure-map & {:keys [layout instance-name array-size]}])}
+  [sym & args]
+  (let [[docstring structure-map & {:keys [layout array-size] :as opts}]
+        (cond->> args
+          (not (string? (first args))) (cons nil))
+        instance-name (:instance-name opts ::not-found)
+        instance-name (if (= instance-name ::not-found)
+                        (ensure-ns sym)
+                        instance-name)
+        block-name (ensure-ns sym)]
+    `(def ~sym ~@(when docstring [docstring])
+       {::type :interface
+        ::block-name '~block-name
+        ::instance-name '~instance-name
+        ::bindings '~structure-map
+        ::opts ~(dissoc opts :instance-name)
+        ::deps ~(into #{}
+                      (comp (map (fn [v] (if (seq? v) (first v) v))) ; the item or the first element of the list
+                            (filter symbol?)                         ; only look at symbols
+                            (keep resolve))                          ; only the ones that resolve are new deps
+                      (vals structure-map))})))
+
+(defmacro defuniformbuffer
+  ""
+  {:arglists '([symbol docstring? structure-map & {:keys [layout instance-name array-size]}])}
+  [sym & args]
+  (let [[docstring structure-map & {:keys [layout array-size] :as opts}]
+        (cond->> args
+          (not (string? (first args))) (cons nil))
+        instance-name (:instance-name opts ::not-found)
+        instance-name (if (= instance-name ::not-found)
+                        (ensure-ns sym)
+                        instance-name)
+        [src deps] (compile-block (ensure-ns (symbol (namespace sym) (str (name sym) "_UNIFORM")))
+                                  "uniform"
+                                  structure-map
+                                  :instance-name instance-name
+                                  :layout layout
+                                  :array-size array-size)]
+    `(def ~sym ~@(when docstring [docstring])
+       {::type :uniform
+        ::source ~src
+        ::deps ~deps})))
+
+(defmacro defstruct
+  ""
+  {:arglists '([symbol docstring? structure-map & {:keys [layout]}])}
+  [sym & args]
+  (let [[docstring structure-map & {:keys [layout]}]
+        (cond->> args
+          (not (string? (first args))) (cons nil))
+        [src deps] (compile-block (ensure-ns sym)
+                                  "struct"
+                                  structure-map
+                                  :layout layout)]
+    `(def ~sym ~@(when docstring [docstring])
+       {::type :struct
         ::source ~src
         ::deps ~deps})))
 
@@ -502,7 +602,16 @@
   [param storage]
   (apply compile-global (::name param) (::param-type param) storage (mapcat identity (::opts param))))
 
-(defn- collect-deps
+(defn- realize-interface
+  ""
+  [interface storage]
+  (apply compile-block (symbol (namespace (::block-name interface))
+                               (str (name (::block-name interface)) "_INTERFACE"))
+         storage (::bindings interface)
+         (concat (mapcat identity (::opts interface)) (list :instance-name
+                                                            (::block-name interface)))))
+
+(defn collect-deps
   ""
   [start-deps]
   (letfn [(deps-seq [deps]
@@ -523,10 +632,23 @@
         deps (group-by ::type (map deref (collect-deps deps)))]
     `(def ~sym ~@(when docstring [docstring])
        ~(str/join "\n\n"
-                  [(str/join (map ::source (:const deps)))
+                  [(str/join (map ::source (:struct deps)))
+                   (str/join (map ::source (:const deps)))
                    (str/join (map ::source (:uniform deps)))
                    (str/join (map (fn [param]
+                                    (when-not (bindings (::name param))
+                                      (throw
+                                       (ex-info "parameters require a storage specifier"
+                                                {:param (::name param)})))
                                     (first (realize-param param (name (bindings (::name param))))))
                                   (:param deps)))
+                   (str/join (map (fn [interface]
+                                    (when-not (bindings (::block-name interface))
+                                      (throw
+                                       (ex-info "interface blocks require a storage specifier"
+                                                {:interface (::block-name interface)})))
+                                    (first (realize-interface interface
+                                                              (name (bindings (::block-name interface))))))
+                                  (:interface deps)))
                    (str/join "\n" (map ::source (:function deps)))
                    src]))))
