@@ -2,9 +2,7 @@
   "Compiles a subset of Clojure data, interpreted as a lisp into GLSL."
   (:require
    [clojure.set :as set]
-   [clojure.string :as str]
-   [clojure.spec.alpha :as s]
-   [clojure.zip :as z])
+   [clojure.string :as str])
   (:import
    (clojure.lang Symbol))
   (:refer-clojure
@@ -129,7 +127,7 @@
   ""
   ([form env test then]
    (cljsl-if form env test then nil))
-  ([form env test then else]
+  ([_form env test then else]
    (let [[test-src test-deps] (compile test env)
          [then-src then-deps] (compile then env)
          [else-src else-deps] (when else
@@ -143,7 +141,7 @@
 
 (defn- cljsl-cond
   ""
-  [form env & clauses]
+  [_form env & clauses]
   (let [compiled (map #(if-not (keyword? %)
                          (compile % env) ; compile all the tests
                          [% #{}])        ; but use keywords for the else
@@ -173,7 +171,7 @@
 
 (defn- cljsl-set!
   ""
-  [form env var initexpr]
+  [_form env var initexpr]
   (let [[initexpr deps] (compile initexpr env)
         dep-var (resolve env var)
         deps (cond-> deps
@@ -186,7 +184,7 @@
 
 (defn- cljsl-do
   ""
-  [form env & body]
+  [_form env & body]
   (let [compiled (map #(compile % env) body)
         statements (map first compiled)
         deps (reduce set/union (map second compiled))]
@@ -221,7 +219,7 @@
 
 (defn- cljsl-let
   ""
-  [form env bindings & body]
+  [_form env bindings & body]
   (let [binding (let [bindings (map vec (partition 2 bindings))]
                    (map var-declaration
                         (map (comp :tag meta first) bindings)
@@ -243,7 +241,7 @@
 
 (defn- cljsl-for
   ""
-  [form env binding test & body]
+  [_form env binding test & body]
   (let [new-env (assoc env (first binding) (second binding))
         [decl-src decl-deps] (var-declaration (:tag (meta (first binding)))
                                               (first binding)
@@ -267,7 +265,7 @@
 (defn- infix-op
   ""
   [op]
-  (fn [form env & args]
+  (fn [_form env & args]
     (let [compiled (map #(compile % env) args)
           exprs (map first compiled)
           deps (reduce set/union (map second compiled))]
@@ -277,7 +275,7 @@
        deps])))
 
 (defn- unary-minus
-  [form env arg]
+  [_form env arg]
   (let [[expr deps] (compile arg env)]
     [(str "(-(" expr "))")
      deps]))
@@ -294,7 +292,7 @@
 (defn- grouped-infix
   ""
   [op grouping]
-  (fn [form env & args]
+  (fn [_form env & args]
     (let [compiled (map #(compile % env) args)
           args (map first compiled)
           deps (reduce set/union (map second compiled))
@@ -307,26 +305,26 @@
 
 (defn- cljsl-return
   ""
-  ([form env val]
+  ([_form env val]
    (let [[expr deps] (compile val env)]
      [(str "return " expr)
       deps]))
-  ([form env]
+  ([_form _env]
    ["return" #{}]))
 
 (defn- cljsl-break
   ""
-  [form env]
+  [_form _env]
   ["break" #{}])
 
 (defn- cljsl-continue
   ""
-  [form env]
+  [_form _env]
   ["continue" #{}])
 
 (defn- cljsl-discard
   ""
-  [form env]
+  [_form _env]
   ["discard" #{}])
 
 (def ^:private special-forms
@@ -340,17 +338,17 @@
    'break #'cljsl-break
    'continue #'cljsl-continue
    'discard #'cljsl-discard
-   'float (fn [form env val]
+   'float (fn [_form _env val]
             [(compile-atom (float val)) #{}])
-   'double (fn [form env val]
+   'double (fn [_form _env val]
              [(compile-atom (double val)) #{}])
-   'long (fn [form env val]
+   'long (fn [_form _env val]
            [(compile-atom (long val)) #{}])
-   'int (fn [form env val]
+   'int (fn [_form _env val]
           [(compile-atom (int val)) #{}])
-   'short (fn [form env val]
+   'short (fn [_form _env val]
             [(compile-atom (short val)) #{}])
-   'byte (fn [form env val]
+   'byte (fn [_form _env val]
            [(compile-atom (byte val)) #{}])
    '+ (infix-op "+")
    '/ (infix-op "/")
@@ -409,7 +407,7 @@
 
 (defn compile-global
   ""
-  [var-name type storage & {:keys [layout invariant? interpolation array-size init memory-qualifier] :as opts}]
+  [var-name type storage & {:keys [layout invariant? interpolation array-size init memory-qualifier]}]
   (when-not var-name
     (throw (ex-info "globals require a name" {})))
   (when-not type
@@ -429,7 +427,7 @@
           " " (if (symbol? type) (sym->ident (ensure-ns type)) type)
           " " (sym->ident var-name) (when arr-expr (str "[" arr-expr "]"))
           " " (when init (str "=" initexpr))";\n")
-     (or (set/union init-deps arr-deps) #{})]))
+     (or (set/union init-deps arr-deps type-deps) #{})]))
 
 (defn compile-block
   ""
@@ -517,7 +515,7 @@
   ""
   {:arglists '([symbol docstring? structure-map & {:keys [layout instance-name array-size]}])}
   [sym & args]
-  (let [[docstring structure-map & {:keys [layout array-size] :as opts}]
+  (let [[docstring structure-map & {:keys [_layout _array-size] :as opts}]
         (cond->> args
           (not (string? (first args))) (cons nil))
         instance-name (:instance-name opts ::not-found)
