@@ -1,12 +1,13 @@
-.dir-locals.el
-
 /target
 /classes
+/.clj-kondo/.cache
 /checkouts
 *.jar
 *.class
 /.cpcache
+.dir-locals.el
 /.lein-*
+/.lsp
 /.nrepl-history
 /.nrepl-port
 .hgignore
