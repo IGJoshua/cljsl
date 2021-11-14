@@ -14,7 +14,9 @@
   #{\1 \2 \3 \4 \5 \6 \7 \8 \9 \0})
 
 (defn str->ident
-  "Converts a string into a GLSL-compliant identifier."
+  "Converts a string into a GLSL-compliant identifier.
+
+  Strings starting with digits are prefixed with an underscore."
   [s]
   (apply str
          (cond->>
@@ -29,14 +31,16 @@
            (digit? (first s)) (cons \_))))
 
 (defn sym->ident
-  ""
+  "Converts a [[Symbol]] into a GLSL-compliant identifier.
+
+  The resulting identifier includes both the namespace and the name."
   [s]
   (if (namespace s)
     (str "NS_" (str->ident (namespace s)) "_SYM_" (str->ident (name s)))
     (str->ident (name s))))
 
 (defprotocol Atom
-  "Objects that can be converted directly into text in GLSL code."
+  "Converts an object to a GLSL string used to compile."
   :extend-via-metadata true
   (compile-atom [a] "Converts the object into GLSL."))
 
@@ -72,7 +76,7 @@
 (declare ^:private special-forms compile)
 
 (defn- compile-fn-call
-  "Constructs a GLSL function call for a form"
+  "Constructs a GLSL function call for a form."
   [form env]
   (let [compiled (map #(compile % env) (rest form))
         args (map first compiled)
@@ -81,7 +85,7 @@
      deps]))
 
 (defn- compile-field-access
-  "Constructs a GLSL struct field access for a form"
+  "Constructs a GLSL struct field access for a form."
   [form env]
   (let [[object deps] (compile (second form) env)]
     [(str object "." (sym->ident (first form)))
@@ -95,7 +99,13 @@
     (symbol (name (ns-name *ns*)) (name sym))))
 
 (defn compile
-  ""
+  "Compiles a `form` to GLSL expressions.
+
+  Returns a vector of the source string and a set of vars that the code depends
+  on.
+
+  `env` is a map with symbol keys representing local variables. The values are
+  an implementation detail and should not be relied upon."
   [form env]
   (if (seq? form)
     (cond
@@ -126,8 +136,10 @@
         [(compile-atom (ensure-ns form)) #{var}])
       [(compile-atom form) #{}])))
 
+;; ==================================================================
+;; Builtin functions and special forms
+
 (defn- cljsl-if
-  ""
   ([form env test then]
    (cljsl-if form env test then nil))
   ([_form env test then else]
@@ -143,7 +155,6 @@
       (set/union test-deps then-deps else-deps)])))
 
 (defn- cljsl-cond
-  ""
   [_form env & clauses]
   (let [compiled (map #(if-not (keyword? %)
                          (compile % env) ; compile all the tests
@@ -173,7 +184,6 @@
      deps]))
 
 (defn- cljsl-set!
-  ""
   [_form env var initexpr]
   (let [[initexpr deps] (compile initexpr env)
         dep-var (resolve env var)
@@ -186,7 +196,6 @@
      deps]))
 
 (defn- cljsl-do
-  ""
   [_form env & body]
   (let [compiled (map #(compile % env) body)
         statements (map first compiled)
@@ -196,7 +205,6 @@
      deps]))
 
 (defn- var-declaration
-  ""
   ([type var init env]
    (var-declaration type nil var init env))
   ([type mods var init env]
@@ -221,7 +229,6 @@
       (set/union type-dep deps)])))
 
 (defn- cljsl-let
-  ""
   [_form env bindings & body]
   (let [binding (let [bindings (map vec (partition 2 bindings))]
                    (map var-declaration
@@ -243,7 +250,6 @@
      (set/union binding-deps body-deps)]))
 
 (defn- cljsl-for
-  ""
   [_form env binding test & body]
   (let [new-env (assoc env (first binding) (second binding))
         [decl-src decl-deps] (var-declaration (:tag (meta (first binding)))
@@ -266,7 +272,7 @@
      (reduce set/union body-deps [decl-deps test-deps inc-deps])]))
 
 (defn- infix-op
-  ""
+  "Constructs an infix operation compilation function out of `op`."
   [op]
   (fn [_form env & args]
     (let [compiled (map #(compile % env) args)
@@ -286,14 +292,14 @@
 (def ^:private nary-minus (infix-op "-"))
 
 (defn- cljsl-minus
-  ""
+  "Compiles a minus operation conditionally as either unary or infix."
   [form env & args]
   (if (= 1 (count args))
     (unary-minus form env (first args))
     (apply nary-minus form env args)))
 
 (defn- grouped-infix
-  ""
+  "Constructs an infix operation function which combines using `grouping` out of `op`."
   [op grouping]
   (fn [_form env & args]
     (let [compiled (map #(compile % env) args)
@@ -307,7 +313,6 @@
        deps])))
 
 (defn- cljsl-return
-  ""
   ([_form env val]
    (let [[expr deps] (compile val env)]
      [(str "return " expr)
@@ -316,21 +321,19 @@
    ["return" #{}]))
 
 (defn- cljsl-break
-  ""
   [_form _env]
   ["break" #{}])
 
 (defn- cljsl-continue
-  ""
   [_form _env]
   ["continue" #{}])
 
 (defn- cljsl-discard
-  ""
   [_form _env]
   ["discard" #{}])
 
 (def ^:private special-forms
+  "Map from symbols to compilation functions."
   {'if #'cljsl-if
    'cond #'cljsl-cond
    'set! #'cljsl-set!
@@ -368,7 +371,10 @@
    '| (infix-op "|")})
 
 (defn compile-function
-  ""
+  "Compiles a function with the given `name` and `args` with the `ret` type from the `body`.
+
+  Returns a vector of the source string and a set of vars that the code depends
+  on."
   [name args ret body]
   (when-not name
     (throw (ex-info "functions require a name" {})))
@@ -404,12 +410,18 @@
      (set/union bindings-deps body-deps ret-dep)]))
 
 (defn- layout-str
-  ""
+  "Construct a layout string to attach to a uniform declaration."
   [layout]
   (str "layout(" (str/join "," (map #(str (key %) (when-let [v (val %)] (str "=" v))) layout)) ")"))
 
 (defn compile-global
-  ""
+  "Compile a global variable from `var-name` with the given `type` and `storage` qualifier.
+
+  Returns a vector of the source string and a set of vars that the code depends
+  on, in this case only types.
+
+  If `array-size` is `:variable`, then it will produce a variable-sized array,
+  suitable for use only in shader storage objects."
   [var-name type storage & {:keys [layout invariant? interpolation array-size init memory-qualifier]}]
   (when-not var-name
     (throw (ex-info "globals require a name" {})))
@@ -417,7 +429,10 @@
     (throw (ex-info "globals require a type"
                     {:var var-name})))
   (let [[initexpr init-deps] (when init (compile init {}))
-        [arr-expr arr-deps] (when array-size (compile array-size {}))
+        [arr-expr arr-deps] (when array-size
+                              (if (= array-size :variable)
+                                [:variable #{}]
+                                (compile array-size {})))
         type-deps (if-let [var (when (symbol? type)
                                  (resolve type))]
                     #{var}
@@ -428,12 +443,20 @@
           " " memory-qualifier
           " " storage
           " " (if (symbol? type) (sym->ident (ensure-ns type)) type)
-          " " (sym->ident var-name) (when arr-expr (str "[" arr-expr "]"))
+          " " (sym->ident var-name) (when arr-expr
+                                      (str "[" (when-not (= arr-expr :variable)
+                                                 arr-expr)
+                                           "]"))
           " " (when init (str "=" initexpr))";\n")
      (or (set/union init-deps arr-deps type-deps) #{})]))
 
 (defn compile-block
-  ""
+  "Compiles a uniform or interface block with the given `block-name` and `storage` qualifier.
+
+  The `bindings` are used to construct the members of the block.
+
+  Returns a vector of the source string and a set of vars that the code depends
+  on, in this case only types."
   [block-name storage bindings & {:keys [layout instance-name array-size memory-qualifier]}]
   (when (and memory-qualifier
              (not= storage "buffer"))
@@ -469,7 +492,12 @@
 (s/def ::array-size nat-int?)
 
 (defmacro defconst
-  ""
+  "Defines a constant for use in shaders.
+
+  The `type` is a string naming a GLSL type, or a symbol naming a var
+  representing a type.
+
+  See [[defstruct]]."
   {:arglists '([symbol type docstring? init & {:keys [array-size]}])}
   [sym type & args]
   (let [[docstring init & {:keys [array-size]}]
@@ -496,7 +524,12 @@
 (s/def ::invariant? boolean?)
 
 (defmacro defparam
-  ""
+  "Define an in/out parameter to pass values between shader stages.
+
+  The `type` is a string naming a GLSL type, or a symbool naming a var
+  representing a type.
+
+  See [[defstruct]]."
   {:arglists '([symbol type docstring? & {:keys [array-size interpolation layout invariant?]}])}
   [sym type & args]
   (let [[docstring & {:as opts}]
@@ -517,7 +550,15 @@
                :kwargs (s/keys* :opt-un [::array-size ::interpolation ::layout ::invariant?])))
 
 (defmacro defuniform
-  ""
+  "Define a uniform variable to pass values from your program to the shader.
+
+  The `type` is a string naming a GLSL type, or a symbol naming a var
+  representing a type.
+
+  The uniform identifier name to introspect the GL state and set the uniform can
+  be constructed using [[sym->ident]].
+
+  See [[defstruct]]."
   {:arglists '([symbol type docstring? & {:keys [array-size layout]}])}
   [sym type & args]
   (let [[docstring & {:keys [array-size layout]}]
@@ -539,9 +580,13 @@
                :kwargs (s/keys* :opt-un [::array-size ::layout])))
 
 (s/def ::instance-name simple-symbol?)
+(s/def ::type-with-args (s/cat :name ::type-name
+                               :kwargs (s/keys* :opt-un [::layout])))
 
 (defmacro definterface
-  ""
+  "Define an interface block for passing values between shader stages.
+
+  The `structure-map` is a map from keywords to types for those fields."
   {:arglists '([symbol docstring? structure-map & {:keys [layout instance-name array-size]}])}
   [sym & args]
   (let [[docstring structure-map & {:keys [_layout _array-size] :as opts}]
@@ -566,11 +611,13 @@
 (s/fdef definterface
   :args (s/cat :sym simple-symbol?
                :docstring (s/? string?)
-               :structure-map (s/map-of symbol? ::type-name)
+               :structure-map (s/map-of simple-keyword? ::type-with-args)
                :kwargs (s/keys* :opt-un [::array-size ::layout ::instance-name])))
 
 (defmacro defuniformbuffer
-  ""
+  "Define a uniform buffer for passing values from your program to the shader.
+
+  The `structure-map` is a map from keywords to types for those fields."
   {:arglists '([symbol docstring? structure-map & {:keys [layout instance-name array-size]}])}
   [sym & args]
   (let [[docstring structure-map & {:keys [layout array-size] :as opts}]
@@ -593,11 +640,11 @@
 (s/fdef defuniformbuffer
   :args (s/cat :sym simple-symbol?
                :docstring (s/? string?)
-               :structure-map (s/map-of symbol? ::type-name)
+               :structure-map (s/map-of simple-keyword? ::type-name)
                :kwargs (s/keys* :opt-un [::array-size ::layout ::instance-name])))
 
 (defmacro defstruct
-  ""
+  "Define a struct type for use defining variables and functions."
   {:arglists '([symbol docstring? structure-map & {:keys [layout]}])}
   [sym & args]
   (let [[docstring structure-map & {:keys [layout]}]
@@ -614,11 +661,13 @@
 (s/fdef defstruct
   :args (s/cat :sym simple-symbol?
                :docstring (s/? string?)
-               :structure-map (s/map-of symbol? ::type-name)
+               :structure-map (s/map-of simple-keyword? ::type-name)
                :kwargs (s/keys* :opt-un [::array-size ::layout ::instance-name])))
 
 (defmacro defshaderfn
-  ""
+  "Define a function for use in shader programs.
+
+  All parameters must be type hinted."
   {:arglists '([symbol docstring? [params*] & body])}
   [sym & args]
   (let [[docstring params & body]
@@ -641,12 +690,16 @@
                :body (s/* any?)))
 
 (defn- realize-param
-  ""
+  "Take a specification for a parameter and turn it into a compiled GLSL string.
+
+  Returns a vector of the string and a set of its dependencies."
   [param storage]
   (apply compile-global (::name param) (::param-type param) storage (mapcat identity (::opts param))))
 
 (defn- realize-interface
-  ""
+  "Take a specification for an interface block and compiles it to a GLSL string.
+
+  Returns a vector of the string and a set of its dependencies."
   [interface storage]
   (apply compile-block (symbol (namespace (::block-name interface))
                                (str (name (::block-name interface)) "_INTERFACE"))
@@ -655,7 +708,7 @@
                                                             (::block-name interface)))))
 
 (defn collect-deps
-  ""
+  "Collects all the dependencies for a starting set, including transitive deps."
   [start-deps]
   (letfn [(deps-seq [deps]
             (when deps
@@ -663,7 +716,10 @@
     (distinct (deps-seq start-deps))))
 
 (defmacro defshader
-  ""
+  "Define a shader stage.
+
+  The var produced holds a map with the key `:cljsl.compiler/source` which holds
+  the source string for the shader function."
   {:arglists '([symbol docstring? {in-out-param :in-or-out} & body])}
   [sym & args]
   (let [[docstring bindings & body]
