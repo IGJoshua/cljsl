@@ -16,14 +16,16 @@
   "Converts a string into a GLSL-compliant identifier."
   [s]
   (apply str
-         (sequence (comp (replace {\- \_ \space \_ \newline \_})
-                         (map (fn [c]
-                                (if (re-matches #"[0-9a-zA-Z_]" (str c))
-                                  (str c)
-                                  (str (apply str "_" (replace {\space \_ \( \_ \) \_}
-                                                               (Character/getName (int c))))
-                                       "_")))))
-                   (seq s))))
+         (cond->>
+             (sequence (comp (replace {\- \_ \space \_ \newline \_})
+                             (map (fn [c]
+                                    (if (re-matches #"[0-9a-zA-Z_]" (str c))
+                                      (str c)
+                                      (str (apply str "_" (replace {\space \_ \( \_ \) \_}
+                                                                   (Character/getName (int c))))
+                                           "_")))))
+                       (seq s))
+           (digit? (first s)) (cons \_))))
 
 (defn sym->ident
   ""
