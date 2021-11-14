@@ -719,7 +719,12 @@
   "Define a shader stage.
 
   The var produced holds a map with the key `:cljsl.compiler/source` which holds
-  the source string for the shader function."
+  the source string for the shader function.
+
+  The metadata keys on `symbol` `:version` and `:extensions` are used to specify
+  the GLSL version and extensions. `:version` is a number defaulting to 400, and
+  `:extensions` is a list of strings, defaulting to a singleton list including
+  only \"core\"."
   {:arglists '([symbol docstring? {in-out-param :in-or-out} & body])}
   [sym & args]
   (let [[docstring bindings & body]
