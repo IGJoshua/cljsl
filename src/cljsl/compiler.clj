@@ -1,6 +1,7 @@
 (ns cljsl.compiler
   "Compiles a subset of Clojure data, interpreted as a lisp into GLSL."
   (:require
+   [clojure.spec.alpha :as s]
    [clojure.set :as set]
    [clojure.string :as str])
   (:import
@@ -463,6 +464,10 @@
 ;; ==================================================================
 ;; Macros
 
+(s/def ::type-name (s/or :native string?
+                         :user-defined symbol?))
+(s/def ::array-size nat-int?)
+
 (defmacro defconst
   ""
   {:arglists '([symbol type docstring? init & {:keys [array-size]}])}
@@ -479,6 +484,16 @@
        {::type :const
         ::source ~src
         ::deps ~deps})))
+(s/fdef defconst
+  :args (s/cat :sym simple-symbol?
+               :type ::type-name
+               :docstring (s/? string?)
+               :init any?
+               :kwargs (s/keys* :opt-un [::array-size])))
+
+(s/def ::interpolation string?)
+(s/def ::layout (s/map-of string? any?))
+(s/def ::invariant? boolean?)
 
 (defmacro defparam
   ""
@@ -495,6 +510,11 @@
         ::deps ~(if (symbol? type)
                   #{(resolve type)}
                   #{})})))
+(s/fdef defparam
+  :args (s/cat :sym simple-symbol?
+               :type ::type-name
+               :docstring (s/? string?)
+               :kwargs (s/keys* :opt-un [::array-size ::interpolation ::layout ::invariant?])))
 
 (defmacro defuniform
   ""
@@ -512,6 +532,13 @@
        {::type :uniform
         ::source ~src
         ::deps ~deps})))
+(s/fdef defuniform
+  :args (s/cat :sym simple-symbol?
+               :type ::type-name
+               :docstring (s/? string?)
+               :kwargs (s/keys* :opt-un [::array-size ::layout])))
+
+(s/def ::instance-name simple-symbol?)
 
 (defmacro definterface
   ""
@@ -536,6 +563,11 @@
                             (filter symbol?)                         ; only look at symbols
                             (keep resolve))                          ; only the ones that resolve are new deps
                       (vals structure-map))})))
+(s/fdef definterface
+  :args (s/cat :sym simple-symbol?
+               :docstring (s/? string?)
+               :structure-map (s/map-of symbol? ::type-name)
+               :kwargs (s/keys* :opt-un [::array-size ::layout ::instance-name])))
 
 (defmacro defuniformbuffer
   ""
@@ -558,6 +590,11 @@
        {::type :uniform
         ::source ~src
         ::deps ~deps})))
+(s/fdef defuniformbuffer
+  :args (s/cat :sym simple-symbol?
+               :docstring (s/? string?)
+               :structure-map (s/map-of symbol? ::type-name)
+               :kwargs (s/keys* :opt-un [::array-size ::layout ::instance-name])))
 
 (defmacro defstruct
   ""
@@ -574,6 +611,11 @@
        {::type :struct
         ::source ~src
         ::deps ~deps})))
+(s/fdef defstruct
+  :args (s/cat :sym simple-symbol?
+               :docstring (s/? string?)
+               :structure-map (s/map-of symbol? ::type-name)
+               :kwargs (s/keys* :opt-un [::array-size ::layout ::instance-name])))
 
 (defmacro defshaderfn
   ""
@@ -590,6 +632,13 @@
        {::type :function
         ::source ~src
         ::deps ~deps})))
+(s/fdef defshaderfn
+  :args (s/cat :sym simple-symbol?
+               :docstring (s/? string?)
+               :params (s/coll-of (s/and simple-symbol?
+                                         (comp :tag meta))
+                                  :kind vector?)
+               :body (s/* any?)))
 
 (defn- realize-param
   ""
@@ -654,3 +703,8 @@
        {::type :shader
         ::source ~src
         ::deps ~deps})))
+(s/fdef defshader
+  :args (s/cat :sym simple-symbol?
+               :docstring (s/? string?)
+               :bindings (s/map-of symbol? #{:in :out})
+               :body (s/* any?)))
