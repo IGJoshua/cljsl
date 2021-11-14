@@ -1,0 +1,8 @@
+{:lint-as {cljsl.compiler/defconst clj-kondo.lint-as/def-catch-all
+           cljsl.compiler/defparam clj-kondo.lint-as/def-catch-all
+           cljsl.compiler/defuniform clj-kondo.lint-as/def-catch-all
+           cljsl.compiler/defuniformbuffer clj-kondo.lint-as/def-catch-all
+           cljsl.compiler/defstruct clj-kondo.lint-as/def-catch-all
+           cljsl.compiler/defshaderfn clojure.core/defn}
+ :hooks {:analyze-call {cljsl.compiler/definterface hooks.cljsl/definterface
+                        cljsl.compiler/defshader hooks.cljsl/defshader}}}
