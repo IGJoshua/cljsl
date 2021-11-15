@@ -6,9 +6,9 @@ of writing, but may become out of date.
 CLJSL (the Clojure Shader Language) is a library for compiling a subset of
 Clojure code to compliant GLSL code for use with OpenGL, OpenGL ES, Vulkan (via
 a GLSL->SPIRV compiler), and WebGL. It provides facilities beyond simple
-translation of code as well, including dependency tracking and namespacing.
-CLJSL code is writtin as normal code inside of your existing Clojure namespaces,
-no resource files or similar are needed.
+translation of code as well, including dependency tracking, namespacing, and
+macros. CLJSL code is writtin as normal code inside of your existing Clojure
+namespaces, no resource files or similar are needed.
 
 At the current stage, CLJSL is simplistic and does not emit errors from bad code
 to be compiled, instead leaving those errors to be picked up by the GLSL
