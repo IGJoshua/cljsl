@@ -351,6 +351,16 @@
           ")")
      (set/union form-deps type-deps)]))
 
+(defn- cljsl-inc
+  [_form env value]
+  (let [[compiled deps] (compile value env)]
+    [(str "((" compiled ") + 1)") deps]))
+
+(defn- cljsl-dec
+  [_form env value]
+  (let [[compiled deps] (compile value env)]
+    [(str "((" compiled ") - 1)") deps]))
+
 (def ^:private special-forms
   "Map from symbols to compilation functions."
   {'if #'cljsl-if
@@ -384,6 +394,8 @@
               (if (number? val)
                 [(compile-atom (boolean val)) #{}]
                 (cljsl-cast form env val "bool")))
+   'inc #'cljsl-inc
+   'dec #'cljsl-dec
    '+ (infix-op "+")
    '/ (infix-op "/")
    '* (infix-op "*")
