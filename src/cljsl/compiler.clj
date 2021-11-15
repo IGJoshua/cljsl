@@ -269,7 +269,7 @@
           (str/join ";\n" body-src)
           ";\n"
           "}\n")
-     (reduce set/union body-deps [decl-deps test-deps inc-deps])]))
+     (reduce set/union #{} (list* decl-deps test-deps inc-deps body-deps))]))
 
 (defn- infix-op
   "Constructs an infix operation compilation function out of `op`."
