@@ -396,6 +396,18 @@
                 (cljsl-cast form env val "bool")))
    'inc #'cljsl-inc
    'dec #'cljsl-dec
+   'incf (fn [_form env var]
+           (let [[compiled deps] (compile var env)]
+             [(str "(++" compiled ")") deps]))
+   'decf (fn [_form env var]
+           (let [[compiled deps] (compile var env)]
+             [(str "(--" compiled ")") deps]))
+   'incf* (fn [_form env var]
+            (let [[compiled deps] (compile var env)]
+              [(str "(" compiled "++)") deps]))
+   'decf* (fn [_form env var]
+            (let [[compiled deps] (compile var env)]
+              [(str "(" compiled "--)") deps]))
    '+ (infix-op "+")
    '/ (infix-op "/")
    '* (infix-op "*")
