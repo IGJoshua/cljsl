@@ -69,6 +69,10 @@
   (compile-atom [a]
     (str a))
 
+  Boolean
+  (compile-atom [a]
+    (str a))
+
   Symbol
   (compile-atom [a]
     (sym->ident a)))
@@ -332,6 +336,21 @@
   [_form _env]
   ["discard" #{}])
 
+(defn- cljsl-cast
+  [_form env value type]
+  (let [[compiled form-deps] (compile value env)
+        type-deps (if (symbol? type)
+                    #{(resolve type)}
+                    #{})]
+    [(str "("
+          (if (symbol? type)
+            (compile-atom (ensure-ns type))
+            (str->ident type))
+          ")("
+          compiled
+          ")")
+     (set/union form-deps type-deps)]))
+
 (def ^:private special-forms
   "Map from symbols to compilation functions."
   {'if #'cljsl-if
@@ -344,18 +363,27 @@
    'break #'cljsl-break
    'continue #'cljsl-continue
    'discard #'cljsl-discard
-   'float (fn [_form _env val]
-            [(compile-atom (float val)) #{}])
-   'double (fn [_form _env val]
-             [(compile-atom (double val)) #{}])
-   'long (fn [_form _env val]
-           [(compile-atom (long val)) #{}])
-   'int (fn [_form _env val]
-          [(compile-atom (int val)) #{}])
-   'short (fn [_form _env val]
-            [(compile-atom (short val)) #{}])
-   'byte (fn [_form _env val]
-           [(compile-atom (byte val)) #{}])
+   'cast #'cljsl-cast
+   'float (fn [form env val]
+            (if (number? val)
+              [(compile-atom (float val)) #{}]
+              (cljsl-cast form env val "float")))
+   'double (fn [form env val]
+             (if (number? val)
+               [(compile-atom (double val)) #{}]
+               (cljsl-cast form env val "double")))
+   'int (fn [form env val]
+          (if (number? val)
+            [(compile-atom (int val)) #{}]
+            (cljsl-cast form env val "int")))
+   'uint (fn [form env val]
+          (if (number? val)
+            [(compile-atom (unchecked-int val)) #{}]
+            (cljsl-cast form env val "uint")))
+   'boolean (fn [form env val]
+              (if (number? val)
+                [(compile-atom (boolean val)) #{}]
+                (cljsl-cast form env val "bool")))
    '+ (infix-op "+")
    '/ (infix-op "/")
    '* (infix-op "*")
