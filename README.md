@@ -105,6 +105,12 @@ can define parameters, shaders, shader functions, uniforms, etc., all in
 different namespaces, and the shader will correctly identify them and include
 them in the code, even if the unqualified names of the vars conflict.
 
+In addition, it shows that the GLSL version and extensions are included at the
+top of the shader file in the `#version` directive. You can change this to
+support OpenGL ES or other versions by adding metadata to your var on the
+`:version` and `:extensions` keys. The `:version` is a number, and `:extensions`
+is a list of strings.
+
 To complete this simple pipeline, a vertex shader is produced below.
 
 ``` clojure
