@@ -13,9 +13,10 @@ namespaces, no resource files or similar are needed.
 At the current stage, CLJSL is simplistic and does not emit errors from bad code
 to be compiled, instead leaving those errors to be picked up by the GLSL
 compiler. For example, CLJSL does not emit an error when using `if` in a part of
-the code besides a statement, but it does not support `if` expressions. Errors
-in usage of CLJSL functions and macros, however, are reported to the user via
-specs on macros and exceptions when calling compilation functions directly.
+the code besides a statement, but it does not support full `if` expressions
+(although a limited ternary `?` operator is provided). Errors in usage of CLJSL
+functions and macros, however, are reported to the user via specs on macros and
+exceptions when calling compilation functions directly.
 
 ## Installation
 As CLJSL is pre-alpha software, no Clojars release has been made. You can depend
@@ -145,9 +146,9 @@ user> (sl/sym->ident `model-view-projection-matrix)
 ```
 
 CLJSL also supports basic flow control operators, `if`, `cond`, `let`, `return`,
-etc., as well as math operations, and n-ary comparators (where `(< a b c)`
-compiles to `a < b && b < c`). Casting is also supported in the form `(cast
-value type)`.
+ternary (`?`), etc., as well as math operations, and n-ary comparators (where
+`(< a b c)` compiles to `a < b && b < c`). Casting is also supported in the form
+`(cast value type)`.
 
 In addition, support for `for` loops is included, with the following syntax:
 

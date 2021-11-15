@@ -361,6 +361,14 @@
   (let [[compiled deps] (compile value env)]
     [(str "((" compiled ") - 1)") deps]))
 
+(defn- cljsl-ternary
+  [_form env test then else]
+  (let [[compiled-test test-deps] (compile test env)
+        [compiled-then then-deps] (compile then env)
+        [compiled-else else-deps] (compile else env)]
+    [(str "((" compiled-test ")?(" compiled-then "):(" compiled-else "))")
+     (set/union test-deps then-deps else-deps)]))
+
 (def ^:private special-forms
   "Map from symbols to compilation functions."
   {'if #'cljsl-if
@@ -420,7 +428,8 @@
    '&& (infix-op "&&")
    '|| (infix-op "||")
    '& (infix-op "&")
-   '| (infix-op "|")})
+   '| (infix-op "|")
+   '? #'cljsl-ternary})
 
 (defn compile-function
   "Compiles a function with the given `name` and `args` with the `ret` type from the `body`.
