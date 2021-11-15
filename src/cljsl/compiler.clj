@@ -452,7 +452,13 @@
 (defn- layout-str
   "Construct a layout string to attach to a uniform declaration."
   [layout]
-  (str "layout(" (str/join "," (map #(str (key %) (when-let [v (val %)] (str "=" v))) layout)) ")"))
+  (str
+   "layout("
+   (str/join "," (map #(str (name (key %))
+                            (when-let [v (val %)]
+                              (str "=" v)))
+                      layout))
+   ")"))
 
 (defn compile-global
   "Compile a global variable from `var-name` with the given `type` and `storage` qualifier.
@@ -560,7 +566,9 @@
                :kwargs (s/keys* :opt-un [::array-size])))
 
 (s/def ::interpolation string?)
-(s/def ::layout (s/map-of string? any?))
+(s/def ::layout (s/map-of (s/or :string string?
+                                :keyword simple-keyword?)
+                          any?))
 (s/def ::invariant? boolean?)
 
 (defmacro defparam
