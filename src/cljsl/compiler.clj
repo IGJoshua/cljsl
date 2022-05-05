@@ -151,6 +151,8 @@
          [then-src then-deps] (compile then env)
          [else-src else-deps] (when else
                                 (compile else env))]
+     ;; FIXME(Joshua): This fails because `then-src` will often be an expression
+     ;; with no brackets and no semicolon
      [(str "if(" test-src ")\n"
            then-src
            (when else
