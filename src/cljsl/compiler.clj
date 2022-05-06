@@ -627,7 +627,8 @@
   representing a type.
 
   The uniform identifier name to introspect the GL state and set the uniform can
-  be constructed using [[sym->ident]].
+  be constructed using [[sym->ident]], but is also cached on the resulting var
+  under the `:cljsl.compiler/ident` key.
 
   See [[defstruct]]."
   {:arglists '([symbol type docstring? & {:keys [array-size layout]}])}
@@ -643,7 +644,8 @@
     `(def ~sym ~@(when docstring [docstring])
        {::type :uniform
         ::source ~src
-        ::deps ~deps})))
+        ::deps ~deps
+        ::ident ~(sym->ident (ensure-ns sym))})))
 (s/fdef defuniform
   :args (s/cat :sym simple-symbol?
                :type ::type-name
