@@ -151,13 +151,15 @@
          [then-src then-deps] (compile then env)
          [else-src else-deps] (when else
                                 (compile else env))]
-     ;; FIXME(Joshua): This fails because `then-src` will often be an expression
-     ;; with no brackets and no semicolon
      [(str "if(" test-src ")\n"
-           then-src
+           "{\n"
+           then-src ";\n"
+           "}\n"
            (when else
              (str "else\n"
-                  else-src)))
+                  "{\n"
+                  else-src ";\n"
+                  "}\n")))
       (set/union test-deps then-deps else-deps)])))
 
 (defn- cljsl-cond
